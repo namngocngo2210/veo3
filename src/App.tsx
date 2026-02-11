@@ -1,0 +1,86 @@
+import { useState, useEffect, useRef } from "react";
+import { ConfigTab } from "./components/ConfigTab";
+import { TextToVideoTab, TextToVideoTabHandle } from "./components/TextToVideoTab";
+import { ImageToVideoTab } from "./components/ImageToVideoTab";
+import { BananaTab } from "./components/BananaTab";
+import { VisualPromptsTab } from "./components/VisualPromptsTab";
+import { Settings, Type, ImageIcon, Image as BananaIcon, FileText } from "lucide-react";
+import { getLanguage } from "./lib/store";
+import { translations, Language } from "./lib/i18n";
+
+type Tab = 'text' | 'image' | 'banana' | 'visual' | 'config';
+
+const tabs: { id: Tab; icon: React.ReactNode }[] = [
+  { id: 'text', icon: <Type className="w-3.5 h-3.5" /> },
+  { id: 'image', icon: <ImageIcon className="w-3.5 h-3.5" /> },
+  { id: 'banana', icon: <BananaIcon className="w-3.5 h-3.5" /> },
+  { id: 'visual', icon: <FileText className="w-3.5 h-3.5" /> },
+  { id: 'config', icon: <Settings className="w-3.5 h-3.5" /> },
+];
+
+function App() {
+  const [activeTab, setActiveTab] = useState<Tab>('text');
+  const [model, setModel] = useState('veo-3.1-generate-preview');
+  const [language, setLanguage] = useState('vi');
+  const textTabRef = useRef<TextToVideoTabHandle>(null);
+
+  useEffect(() => {
+    getLanguage().then(setLanguage);
+  }, []);
+
+  const t = translations[language as Language] || translations.vi;
+
+  const getTabLabel = (id: Tab) => {
+    switch (id) {
+      case 'text': return t.tabText;
+      case 'image': return t.tabImage;
+      case 'banana': return t.tabBanana;
+      case 'visual': return t.tabVisualPrompts;
+      case 'config': return t.tabConfig;
+    }
+  };
+
+  return (
+    <main className="h-screen flex flex-col bg-[#f5f5f5] text-gray-900 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-2.5 border-b border-gray-200 bg-white shrink-0">
+        <h1 className="text-sm font-semibold tracking-tight">{t.appTitle}</h1>
+        <nav className="flex gap-0.5 p-0.5 rounded-lg bg-gray-100">
+          {tabs.map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === tab.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}>
+              {tab.icon}
+              {getTabLabel(tab.id)}
+            </button>
+          ))}
+        </nav>
+      </div>
+      <div className="flex-1 overflow-auto p-5">
+        <div className={activeTab === 'text' ? 'h-full' : 'hidden'}>
+          <TextToVideoTab ref={textTabRef} model={model} language={language} />
+        </div>
+        <div className={activeTab === 'image' ? 'h-full' : 'hidden'}>
+          <ImageToVideoTab model={model} language={language} />
+        </div>
+        <div className={activeTab === 'banana' ? 'h-full' : 'hidden'}>
+          <BananaTab model={model} language={language} />
+        </div>
+        <div className={activeTab === 'visual' ? 'h-full' : 'hidden'}>
+          <VisualPromptsTab
+            model={model}
+            language={language}
+            onAddPrompts={(prompts) => {
+              setActiveTab('text');
+              setTimeout(() => textTabRef.current?.addPrompts(prompts), 100);
+            }}
+          />
+        </div>
+        <div className={activeTab === 'config' ? '' : 'hidden'}>
+          <ConfigTab model={model} onModelChange={setModel} language={language} onLanguageChange={setLanguage} />
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export default App;
