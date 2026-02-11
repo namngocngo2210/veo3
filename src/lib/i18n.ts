@@ -72,11 +72,13 @@ export const translations = {
         genPrompts: 'Tạo Prompts',
         copy: 'Sao chép',
         sendToTextTab: 'Gửi qua Text-to-Video',
+        sendToBananaTab: 'Gửi qua Nano Banana',
         promptsGenerated: 'Đã tạo {count} prompts',
         visualPromptPlaceholder: 'Dán kịch bản vào đây hoặc upload file .txt...',
 
         // Alerts
-        alertNoKey: 'Lưu API Key trong Config trước!'
+        alertNoKey: 'Lưu API Key trong Config trước!',
+        batchComplete: 'Đã hoàn thành tạo hàng loạt!'
     },
     en: {
         // App
@@ -149,10 +151,12 @@ export const translations = {
         genPrompts: 'Generate Prompts',
         copy: 'Copy',
         sendToTextTab: 'Send to Text-to-Video',
+        sendToBananaTab: 'Send to Nano Banana',
         promptsGenerated: 'Generated {count} prompts',
         visualPromptPlaceholder: 'Paste script here or upload .txt file...',
 
         // Alerts
-        alertNoKey: 'Please save API Key in Config first!'
+        alertNoKey: 'Please save API Key in Config first!',
+        batchComplete: 'Batch generation completed!'
     }
 };

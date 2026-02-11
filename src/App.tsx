@@ -23,6 +23,7 @@ function App() {
   const [model, setModel] = useState('veo-3.1-generate-preview');
   const [language, setLanguage] = useState('vi');
   const textTabRef = useRef<TextToVideoTabHandle>(null);
+  const bananaTabRef = useRef<any>(null); // Todo: Type this properly if needed, or use BananaTabHandle
 
   useEffect(() => {
     getLanguage().then(setLanguage);
@@ -63,7 +64,7 @@ function App() {
           <ImageToVideoTab model={model} language={language} />
         </div>
         <div className={activeTab === 'banana' ? 'h-full' : 'hidden'}>
-          <BananaTab model={model} language={language} />
+          <BananaTab ref={bananaTabRef} model={model} language={language} />
         </div>
         <div className={activeTab === 'visual' ? 'h-full' : 'hidden'}>
           <VisualPromptsTab
@@ -72,6 +73,10 @@ function App() {
             onAddPrompts={(prompts) => {
               setActiveTab('text');
               setTimeout(() => textTabRef.current?.addPrompts(prompts), 100);
+            }}
+            onAddBananaPrompts={(prompts) => {
+              setActiveTab('banana');
+              setTimeout(() => bananaTabRef.current?.addPrompts(prompts), 100);
             }}
           />
         </div>

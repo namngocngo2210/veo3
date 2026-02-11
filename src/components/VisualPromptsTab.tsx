@@ -1,16 +1,18 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { getApiKey } from '../lib/store';
-import { Upload, Play, Loader2, Copy, Send, Clock } from 'lucide-react';
+import { getApiKey, getVisualPromptsHistory, saveVisualPromptsHistory } from '../lib/store';
+import { Upload, Play, Loader2, Copy, Send, Clock, Image as BananaIcon } from 'lucide-react';
 import { translations, Language } from '../lib/i18n';
+import { useToast } from './Toast';
 
 interface Props {
     model: string;
     language: string;
     onAddPrompts: (prompts: string[]) => void;
+    onAddBananaPrompts?: (prompts: string[]) => void;
 }
 
-export function VisualPromptsTab({ model: _model, language, onAddPrompts }: Props) {
+export function VisualPromptsTab({ model: _model, language, onAddPrompts, onAddBananaPrompts }: Props) {
     const [script, setScript] = useState('');
     const [duration, setDuration] = useState<string>('60');
     const [prompts, setPrompts] = useState<string[]>([]);
@@ -18,6 +20,24 @@ export function VisualPromptsTab({ model: _model, language, onAddPrompts }: Prop
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const t = translations[language as Language] || translations.vi;
+    const { error: toastError, success: toastSuccess } = useToast();
+
+    // Persistence
+    useEffect(() => {
+        getVisualPromptsHistory().then(history => {
+            if (history) {
+                setScript(history.script);
+                setPrompts(history.prompts);
+            }
+        });
+    }, []);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            saveVisualPromptsHistory({ script, prompts });
+        }, 1000);
+        return () => clearTimeout(timer);
+    }, [script, prompts]);
 
     const handleFileImport = (file: File) => {
         const reader = new FileReader();
@@ -31,11 +51,11 @@ export function VisualPromptsTab({ model: _model, language, onAddPrompts }: Prop
     const handleGenerate = async () => {
         if (!script.trim()) return;
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(t.alertNoKey); return; }
 
         const durationSec = parseInt(duration) || 0;
         if (durationSec < 8) {
-            alert("Duration must be at least 8 seconds");
+            toastError("Duration must be at least 8 seconds");
             return;
         }
 
@@ -112,13 +132,14 @@ ${script}`;
                     .map((l: string) => l.trim())
                     .filter((l: string) => l.length > 0 && !l.startsWith('Script:') && !l.startsWith('Role:'));
                 setPrompts(lines);
+                toastSuccess(`Generated ${lines.length} prompts`);
             }
         } catch (e: any) {
             console.error("Failed to generate prompts", e);
             if (e.message?.includes('429') || e.status === 429) {
-                alert(language === 'vi' ? 'Thao tác quá nhanh, vui lòng đợi 1 chút rồi thử lại.' : 'Too many requests, please wait a moment.');
+                toastError(language === 'vi' ? 'Thao tác quá nhanh, vui lòng đợi 1 chút rồi thử lại.' : 'Too many requests, please wait a moment.');
             } else {
-                alert("Error generating prompts: " + (e.message || 'Unknown error'));
+                toastError("Error generating prompts: " + (e.message || 'Unknown error'));
             }
         } finally {
             setIsGenerating(false);
@@ -127,6 +148,7 @@ ${script}`;
 
     const handleCopy = () => {
         navigator.clipboard.writeText(prompts.join('\n'));
+        toastSuccess('Copied to clipboard');
     };
 
     return (
@@ -197,13 +219,24 @@ ${script}`;
                     className="flex-1 p-3 rounded-lg border border-gray-200 resize-none outline-none focus:border-blue-400 text-sm font-mono leading-relaxed bg-gray-50 text-gray-600"
                 />
 
-                <button
-                    onClick={() => onAddPrompts(prompts)}
-                    disabled={prompts.length === 0}
-                    className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white font-medium py-2.5 rounded-lg text-sm transition shadow-sm"
-                >
-                    <Send className="w-4 h-4" /> {t.sendToTextTab}
-                </button>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => onAddPrompts(prompts)}
+                        disabled={prompts.length === 0}
+                        className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white font-medium py-2.5 rounded-lg text-sm transition shadow-sm"
+                    >
+                        <Send className="w-4 h-4" /> {t.sendToTextTab}
+                    </button>
+                    {onAddBananaPrompts && (
+                        <button
+                            onClick={() => onAddBananaPrompts(prompts)}
+                            disabled={prompts.length === 0}
+                            className="flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-400 disabled:opacity-40 text-white font-medium py-2.5 rounded-lg text-sm transition shadow-sm"
+                        >
+                            <BananaIcon className="w-4 h-4" /> {t.sendToBananaTab || "Send to Nano Banana"}
+                        </button>
+                    )}
+                </div>
             </div>
         </div>
     );

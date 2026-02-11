@@ -74,13 +74,14 @@ export function filePathToUrl(filePath: string): string {
 // --- Prompt History ---
 export interface SavedResult {
     prompt: string;
-    status: 'success' | 'error';
+    status: 'idle' | 'queued' | 'loading' | 'success' | 'error';
     videoFilePaths?: string[];
     error?: string;
 }
 
 export interface SavedPrompt {
     text: string;
+    imageFilePath?: string; // For ImageToVideo
     results: SavedResult[];
 }
 
@@ -118,4 +119,20 @@ export async function saveLanguage(lang: string) {
 export async function getLanguage(): Promise<string> {
     const store = await getStore();
     return (await store.get<string>('app_language')) ?? 'vi';
+}
+
+// --- Visual Prompts History ---
+export interface VisualPromptsHistory {
+    script: string;
+    prompts: string[];
+}
+
+export async function saveVisualPromptsHistory(history: VisualPromptsHistory) {
+    const store = await getStore();
+    await store.set('history_visual_prompts', history);
+}
+
+export async function getVisualPromptsHistory(): Promise<VisualPromptsHistory | null> {
+    const store = await getStore();
+    return (await store.get<VisualPromptsHistory>('history_visual_prompts')) ?? null;
 }

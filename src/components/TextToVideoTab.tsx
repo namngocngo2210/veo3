@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, memo } from 'react';
 import { VideoResult, generateVideo, generateBatch } from '../lib/gemini';
 import { getApiKey, saveTabHistory, getTabHistory, filePathToUrl, SavedPrompt, getSavePath, saveSavePath } from '../lib/store';
 import { VideoResultList } from './VideoResultList';
 import { Plus, X, Play, Loader2, Trash2, RotateCcw, Upload, FolderOpen, Download, RectangleHorizontal, RectangleVertical, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { translations, Language } from '../lib/i18n';
+import { useToast } from './Toast';
 
 interface Props { model: string; language: string; }
 
@@ -28,8 +29,11 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
     const [saveDir, setSaveDir] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const promptsRef = useRef(prompts);
+    promptsRef.current = prompts;
 
     const t = translations[language as Language] || translations.vi;
+    const { error: toastError, success: toastSuccess } = useToast();
 
     // Expose addPrompts to parent
     useImperativeHandle(ref, () => ({
@@ -141,9 +145,9 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
         setPrompts(prev => prev.map(p => ({ ...p, isProcessing: false })));
     };
 
-    const retrySingle = async (index: number) => {
+    const retrySingle = useCallback(async (index: number) => {
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(translations[language as Language]?.alertNoKey || translations.vi.alertNoKey); return; }
         const controller = new AbortController();
 
         setPrompts(prev => {
@@ -153,7 +157,10 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
         });
         setSelectedIndex(index);
 
-        const runIndex = prompts[index].results.length;
+        // Use ref to get current state without dependency
+        const currentPrompts = promptsRef.current;
+        const runIndex = currentPrompts[index].results.length;
+
         setPrompts(prev => {
             const n = [...prev];
             n[index] = {
@@ -166,7 +173,7 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
         try {
             await generateVideo(
                 {
-                    prompt: prompts[index].text,
+                    prompt: currentPrompts[index].text,
                     model,
                     apiKey,
                     aspectRatio,
@@ -193,12 +200,12 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
                 return n;
             });
         }
-    };
+    }, [model, aspectRatio, saveDir, language]);
 
     const handleProcessAll = async () => {
         if (prompts.length === 0) return;
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(t.alertNoKey); return; }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -244,6 +251,9 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
         } catch (e) {
             console.log('Batch cancelled or error:', e);
         } finally {
+            if (!controller.signal.aborted) {
+                toastSuccess(t.batchComplete || "Batch generation completed!");
+            }
             setPrompts(prev => prev.map(p => ({ ...p, isProcessing: false })));
             setIsBatchProcessing(false);
             abortControllerRef.current = null;
@@ -389,35 +399,49 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
                         <div className="divide-y divide-gray-100">
                             {prompts.map((p, i) => (
                                 <div key={i} className="px-4 py-3">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-xs font-medium text-gray-600 truncate flex-1">
-                                            <span className="text-gray-400">#{i + 1}</span> {p.text.slice(0, 60)}{p.text.length > 60 ? '...' : ''}
-                                        </span>
-                                        {!p.isProcessing && (
-                                            <button onClick={() => retrySingle(i)}
-                                                className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 ml-2 shrink-0">
-                                                <RotateCcw className="w-3 h-3" /> {t.retry}
-                                            </button>
-                                        )}
-                                    </div>
-                                    {p.isProcessing && p.results.length === 0 && (
-                                        <div className="flex items-center gap-2 text-xs text-blue-500">
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                            {t.generating}
-                                        </div>
-                                    )}
-                                    {p.results.length > 0 && (
-                                        <VideoResultList onRetry={() => retrySingle(i)} results={p.results} />
-                                    )}
-                                    {!p.isProcessing && p.results.length === 0 && (
-                                        <div className="text-xs text-gray-300 italic">{t.noResults}</div>
-                                    )}
+                                    <PromptResultRow
+                                        index={i}
+                                        item={p}
+                                        onRetry={retrySingle}
+                                        t={t}
+                                    />
                                 </div>
                             ))}
+
                         </div>
                     )}
                 </div>
             </div>
+        </div>
+    );
+});
+
+const PromptResultRow = memo(({ index, item, onRetry, t }: { index: number, item: PromptItem, onRetry: (i: number) => void, t: any }) => {
+    return (
+        <div>
+            <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-gray-600 truncate flex-1">
+                    <span className="text-gray-400">#{index + 1}</span> {item.text.slice(0, 60)}{item.text.length > 60 ? '...' : ''}
+                </span>
+                {!item.isProcessing && (
+                    <button onClick={() => onRetry(index)}
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 ml-2 shrink-0">
+                        <RotateCcw className="w-3 h-3" /> {t.retry}
+                    </button>
+                )}
+            </div>
+            {item.isProcessing && item.results.length === 0 && (
+                <div className="flex items-center gap-2 text-xs text-blue-500">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {t.generating}
+                </div>
+            )}
+            {item.results.length > 0 && (
+                <VideoResultList onRetry={() => onRetry(index)} results={item.results} />
+            )}
+            {!item.isProcessing && item.results.length === 0 && (
+                <div className="text-xs text-gray-300 italic">{t.noResults}</div>
+            )}
         </div>
     );
 });

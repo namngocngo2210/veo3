@@ -1,13 +1,14 @@
-import { useState, useRef, useEffect } from 'react';
-import { getApiKey, getSavePath, saveSavePath, saveVideoFileToDir, filePathToUrl } from '../lib/store';
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { getApiKey, getSavePath, saveSavePath, saveVideoFileToDir, filePathToUrl, getTabHistory, saveTabHistory, SavedPrompt } from '../lib/store';
 import { fileToBase64 } from '../lib/gemini';
 import { Upload, Play, Loader2, X, Image as ImageIcon, Download, FolderOpen, Trash2, Square, RectangleHorizontal, RectangleVertical, Plus, RefreshCw } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { GoogleGenAI } from '@google/genai';
 import pLimit from 'p-limit';
 import { translations, Language } from '../lib/i18n';
+import { useToast } from './Toast';
 
-const limit = pLimit(3);
+const limit = pLimit(2);
 
 interface Props { model: string; language: string; }
 
@@ -18,6 +19,7 @@ interface PromptItem {
     text: string;
     status: 'idle' | 'loading' | 'success' | 'error';
     resultImages: string[];
+    resultImagePaths?: string[]; // Store local paths for persistence
     error?: string;
 }
 
@@ -27,7 +29,11 @@ interface RefImage {
     preview: string;
 }
 
-export function BananaTab({ model: _veoModel, language }: Props) {
+export interface BananaTabHandle {
+    addPrompts: (prompts: string[]) => void;
+}
+
+export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel, language }, ref) => {
     const [items, setItems] = useState<PromptItem[]>([]);
     const [input, setInput] = useState('');
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -41,10 +47,66 @@ export function BananaTab({ model: _veoModel, language }: Props) {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const t = translations[language as Language] || translations.vi;
+    const { error: toastError, success: toastSuccess } = useToast();
+
+    // Expose addPrompts
+    useImperativeHandle(ref, () => ({
+        addPrompts: (newPrompts: string[]) => {
+            const newItems: PromptItem[] = newPrompts.map(t => ({
+                id: crypto.randomUUID(),
+                text: t,
+                status: 'idle',
+                resultImages: [],
+            }));
+            setItems(prev => [...prev, ...newItems]);
+            setSelectedIndex(items.length);
+        }
+    }));
+
+    const [loaded, setLoaded] = useState(false);
 
     useEffect(() => {
-        getSavePath().then(p => { if (p) setSaveDir(p); });
+        (async () => {
+            const path = await getSavePath();
+            if (path) setSaveDir(path);
+
+            // Load history
+            const history = await getTabHistory('banana');
+            if (history && history.prompts.length > 0) {
+                const restored: PromptItem[] = history.prompts.map(p => ({
+                    id: crypto.randomUUID(),
+                    text: p.text,
+                    status: 'success',
+                    resultImages: p.results[0]?.videoFilePaths?.map(fp => filePathToUrl(fp)) || [],
+                    resultImagePaths: p.results[0]?.videoFilePaths || [],
+                    error: p.results[0]?.error,
+                }));
+                setItems(restored);
+                if (restored.length > 0) setSelectedIndex(0);
+            }
+            setLoaded(true);
+        })();
     }, []);
+
+    // Persist history
+    const persistHistory = async (currentItems: PromptItem[]) => {
+        const saved: SavedPrompt[] = currentItems.map(p => ({
+            text: p.text,
+            results: [{
+                prompt: p.text,
+                status: p.status === 'success' ? 'success' : 'error',
+                videoFilePaths: p.resultImagePaths, // Use paths
+                error: p.error
+            }]
+        }));
+        await saveTabHistory('banana', { prompts: saved });
+    };
+
+    useEffect(() => {
+        if (!loaded) return;
+        const timer = setTimeout(() => persistHistory(items), 1000);
+        return () => clearTimeout(timer);
+    }, [items, loaded]);
 
     useEffect(() => {
         return () => { refImages.forEach(r => URL.revokeObjectURL(r.preview)); };
@@ -69,8 +131,6 @@ export function BananaTab({ model: _veoModel, language }: Props) {
         if (selectedIndex === index) setSelectedIndex(null);
         else if (selectedIndex !== null && selectedIndex > index) setSelectedIndex(selectedIndex - 1);
     };
-
-
 
     const clearAll = () => {
         setItems([]);
@@ -159,6 +219,7 @@ export function BananaTab({ model: _veoModel, language }: Props) {
             if (signal.aborted) throw new Error("Cancelled");
 
             const images: string[] = [];
+            const filePaths: string[] = []; // Collect paths
             const responseParts = response.candidates?.[0]?.content?.parts || [];
 
             for (const part of responseParts) {
@@ -169,8 +230,9 @@ export function BananaTab({ model: _veoModel, language }: Props) {
                     if (saveDir) {
                         const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type: mimeType });
                         const ext = mimeType.includes('png') ? 'png' : 'jpg';
-                        const filename = `imagen_${Date.now()}_1.${ext}`;
+                        const filename = `imagen_${Date.now()}_${images.length}.${ext}`;
                         const filePath = await saveVideoFileToDir(blob, filename, saveDir);
+                        filePaths.push(filePath);
                         images.push(filePathToUrl(filePath));
                     } else {
                         images.push(`data:${mimeType};base64,${b64}`);
@@ -184,7 +246,12 @@ export function BananaTab({ model: _veoModel, language }: Props) {
 
             setItems(prev => {
                 const n = [...prev];
-                n[index] = { ...n[index], status: 'success', resultImages: images };
+                n[index] = {
+                    ...n[index],
+                    status: 'success',
+                    resultImages: images,
+                    resultImagePaths: saveDir ? images.map((_, i) => filePaths[i]) : undefined
+                };
                 return n;
             });
         } catch (e: any) {
@@ -199,7 +266,7 @@ export function BananaTab({ model: _veoModel, language }: Props) {
 
     const retrySingle = async (index: number) => {
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(t.alertNoKey); return; }
         const controller = new AbortController();
         await generateSingle(index, apiKey, controller.signal);
     };
@@ -211,7 +278,7 @@ export function BananaTab({ model: _veoModel, language }: Props) {
         if (pendingIndices.length === 0) return;
 
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(t.alertNoKey); return; }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -225,7 +292,12 @@ export function BananaTab({ model: _veoModel, language }: Props) {
             })
         );
 
-        try { await Promise.all(tasks); } catch (e) { console.log("Batch error", e); }
+        try {
+            await Promise.all(tasks);
+            if (!controller.signal.aborted) {
+                toastSuccess(t.batchComplete || "Batch generation completed!");
+            }
+        } catch (e) { console.log("Batch error", e); }
         finally { setIsProcessing(false); abortControllerRef.current = null; }
     };
 
@@ -467,4 +539,4 @@ export function BananaTab({ model: _veoModel, language }: Props) {
             </div>
         </div>
     );
-}
+});

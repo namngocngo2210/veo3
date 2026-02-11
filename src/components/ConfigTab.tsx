@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getApiKey, saveApiKey, saveModel, saveLanguage } from '../lib/store';
 import { Save, CheckCircle2, Eye, EyeOff, Globe } from 'lucide-react';
 import { translations, Language } from '../lib/i18n';
+import { useToast } from './Toast';
 
 interface ConfigTabProps {
     model: string;
@@ -16,6 +17,7 @@ export function ConfigTab({ model, onModelChange, language, onLanguageChange }: 
     const [showKey, setShowKey] = useState(false);
 
     const t = translations[language as Language] || translations.vi;
+    const { success: toastSuccess } = useToast();
 
     useEffect(() => {
         getApiKey().then((key) => {
@@ -26,6 +28,7 @@ export function ConfigTab({ model, onModelChange, language, onLanguageChange }: 
     const handleSave = async () => {
         await saveApiKey(apiKey);
         setIsSaved(true);
+        toastSuccess(t.saved || 'Saved');
         setTimeout(() => setIsSaved(false), 2000);
     };
 

@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { saveVideoFile, saveVideoFileToDir } from "./store";
+import { readFile } from '@tauri-apps/plugin-fs';
 
 const limit = pLimit(2);
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
@@ -23,6 +24,17 @@ export async function fileToBase64(file: File): Promise<string> {
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });
+}
+
+/** Convert local image file path to base64 string */
+export async function imagePathToBase64(path: string): Promise<string> {
+    const contents = await readFile(path);
+    let binary = '';
+    const len = contents.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(contents[i]);
+    }
+    return window.btoa(binary);
 }
 
 async function downloadVideoBlob(videoUri: string, apiKey: string): Promise<Blob> {

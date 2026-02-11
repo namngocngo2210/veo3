@@ -1,17 +1,18 @@
-import { useState, useRef, useEffect } from 'react';
-import { VideoResult, generateVideo, fileToBase64 } from '../lib/gemini';
-import { getApiKey, filePathToUrl, getSavePath, saveSavePath } from '../lib/store';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
+import { VideoResult, generateVideo, imagePathToBase64 } from '../lib/gemini';
+import { getApiKey, filePathToUrl, getSavePath, saveSavePath, saveTabHistory, getTabHistory, SavedPrompt } from '../lib/store';
 import { VideoResultList } from './VideoResultList';
 import { Upload, Play, Loader2, X, Trash2, RotateCcw, FolderOpen, Download, RectangleHorizontal, RectangleVertical, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import pLimit from 'p-limit';
 import { translations, Language } from '../lib/i18n';
+import { useToast } from './Toast';
 
 interface Props { model: string; language: string; }
 
 interface ImageItem {
     id: string;
-    file: File;
+    filePath: string;
     preview: string;
     prompt: string;
     status: VideoResult['status'];
@@ -27,61 +28,118 @@ export function ImageToVideoTab({ model, language }: Props) {
     const [isProcessing, setIsProcessing] = useState(false);
     const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
     const [saveDir, setSaveDir] = useState<string | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const itemsRef = useRef(items);
+    itemsRef.current = items;
 
     const t = translations[language as Language] || translations.vi;
+    const { error: toastError, success: toastSuccess } = useToast();
+    const [loaded, setLoaded] = useState(false);
 
-    // Load save path
+    // Load history + save path
     useEffect(() => {
         (async () => {
             const path = await getSavePath();
             if (path) setSaveDir(path);
+
+            const history = await getTabHistory('image_to_video');
+            if (history && history.prompts.length > 0) {
+                const restored: ImageItem[] = history.prompts.map(p => ({
+                    id: crypto.randomUUID(),
+                    filePath: p.imageFilePath || '',
+                    preview: p.imageFilePath ? filePathToUrl(p.imageFilePath) : '',
+                    prompt: p.text,
+                    status: (p.results[0]?.status as VideoResult['status']) || 'idle',
+                    result: p.results[0] ? {
+                        prompt: p.results[0].prompt,
+                        status: p.results[0].status as VideoResult['status'],
+                        videoFilePaths: p.results[0].videoFilePaths,
+                        videoBlobUrls: p.results[0].videoFilePaths?.map(fp => filePathToUrl(fp)),
+                        error: p.results[0].error
+                    } : undefined,
+                    error: p.results[0]?.error
+                })).filter(i => i.filePath !== ''); // Filter out invalid items
+
+                setItems(restored);
+                if (restored.length > 0) setSelectedIndex(0);
+            }
+            setLoaded(true);
         })();
     }, []);
 
-    // Cleanup previews
-    useEffect(() => {
-        return () => {
-            items.forEach(item => URL.revokeObjectURL(item.preview));
-        };
+    // Persist history
+    const persistHistory = useCallback(async (currentItems: ImageItem[]) => {
+        const saved: SavedPrompt[] = currentItems.map(p => ({
+            text: p.prompt,
+            imageFilePath: p.filePath,
+            results: p.result ? [{
+                prompt: p.result.prompt,
+                status: p.result.status,
+                videoFilePaths: p.result.videoFilePaths,
+                error: p.result.error
+            }] : []
+        }));
+        await saveTabHistory('image_to_video', { prompts: saved });
     }, []);
 
+    useEffect(() => {
+        if (!loaded) return;
+        const timer = setTimeout(() => persistHistory(items), 1000);
+        return () => clearTimeout(timer);
+    }, [items, loaded, persistHistory]);
+
+    // Cleanup previews? No need for filePathToUrl (managed by Tauri).
+    // But if we createObjectURL manually? No, we use filePathToUrl exclusively now.
+
     // --- Actions ---
-    const handleFilesSelect = (files: File[]) => {
-        if (!files.length) return;
-        const newItems: ImageItem[] = Array.from(files).map(file => ({
+    const handleFilesSelect = async () => {
+        const selected = await open({
+            multiple: true,
+            filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+        });
+
+        if (!selected) return;
+
+        // selected is string[] or string inside string[]? 
+        // Type definition says string | string[] | null.
+        const paths = Array.isArray(selected) ? selected : [selected];
+
+        const newItems: ImageItem[] = paths.map(path => ({
             id: crypto.randomUUID(),
-            file,
-            preview: URL.createObjectURL(file), // create sync preview
+            filePath: path,
+            preview: filePathToUrl(path),
             prompt: '',
             status: 'idle',
         }));
+
         setItems(prev => [...prev, ...newItems]);
-        if (selectedIndex === null) setSelectedIndex(items.length); // select first of new batch
+        if (selectedIndex === null && newItems.length > 0) setSelectedIndex(items.length);
     };
 
-    const removeItem = (index: number) => {
-        const item = items[index];
-        URL.revokeObjectURL(item.preview);
-        setItems(prev => prev.filter((_, i) => i !== index));
-        if (selectedIndex === index) setSelectedIndex(null);
-        else if (selectedIndex !== null && selectedIndex > index) setSelectedIndex(selectedIndex - 1);
-    };
+    const removeItem = useCallback((index: number) => {
+        setItems(prev => {
+            const n = prev.filter((_, i) => i !== index);
+            return n;
+        });
+        setSelectedIndex(prev => {
+            if (prev === index) return null;
+            if (prev !== null && prev > index) return prev - 1;
+            return prev;
+        });
+    }, []);
 
     const clearAll = () => {
-        items.forEach(item => URL.revokeObjectURL(item.preview));
         setItems([]);
         setSelectedIndex(null);
     };
 
-    const updatePrompt = (index: number, text: string) => {
+    const updatePrompt = useCallback((index: number, text: string) => {
         setItems(prev => {
             const n = [...prev];
             n[index] = { ...n[index], prompt: text };
             return n;
         });
-    };
+    }, []);
 
     // --- Save location ---
     const handleChooseSaveDir = async () => {
@@ -99,39 +157,47 @@ export function ImageToVideoTab({ model, language }: Props) {
             abortControllerRef.current = null;
         }
         setIsProcessing(false);
+        setItems(prev => prev.map(p => p.status === 'loading' || p.status === 'queued' ? { ...p, status: 'idle' } : p));
     };
 
     const processItem = async (index: number, apiKey: string, signal: AbortSignal) => {
+        // We use itemsRef to access latest state if needed, but here we pass index
+        // However, we rely on state updates.
+
+        // 1. Read base64
+        let base64 = "";
+        const currentItem = itemsRef.current[index]; // Access latest via ref to get path
+        if (!currentItem) return;
+
+        try {
+            base64 = await imagePathToBase64(currentItem.filePath);
+        } catch (e) {
+            console.error("Failed to read image", e);
+            setItems(prev => {
+                const n = [...prev];
+                if (n[index]) n[index] = { ...n[index], status: 'error', error: "Failed to read image" };
+                return n;
+            });
+            return;
+        }
+
+        if (signal.aborted) return;
+
         setItems(prev => {
             const n = [...prev];
             if (n[index]) n[index] = { ...n[index], status: 'loading' };
             return n;
         });
 
-        const item = items[index];
-
-        // 1. Read base64 (lazy)
-        let base64 = "";
-        try {
-            base64 = await fileToBase64(item.file);
-        } catch (e) {
-            console.error("Failed to read image", e);
-            setItems(prev => {
-                const n = [...prev];
-                n[index] = { ...n[index], status: 'error', error: "Failed to read image" };
-                return n;
-            });
-            return;
-        }
-        if (signal.aborted) return;
-
         // 2. Generate
         await generateVideo(
             {
-                prompt: item.prompt,
+                prompt: currentItem.prompt,
                 model,
                 apiKey,
-                image: { base64, mimeType: item.file.type },
+                image: { base64, mimeType: 'image/png' }, // Assume png/jpeg, MIME detection in helper? Helper returns base64. 
+                // We should probably detect mime type from ext.
+                // gemini.ts params.image needs mimeType.
                 aspectRatio,
                 saveDir: saveDir ?? undefined,
                 signal
@@ -140,16 +206,12 @@ export function ImageToVideoTab({ model, language }: Props) {
                 setItems(prev => {
                     const n = [...prev];
                     if (!n[index]) return n;
-                    // Merge update into result
-                    const currentResult = n[index].result || { prompt: n[index].prompt, status: 'loading' };
-                    // If update has status, update item status too
-                    if (update.status) n[index].status = update.status;
 
-                    // Correctly map file paths to urls if present
+                    const currentResult = n[index].result || { prompt: n[index].prompt, status: 'loading' };
+                    if (update.status) n[index].status = update.status;
                     if (update.videoFilePaths) {
                         update.videoBlobUrls = update.videoFilePaths.map(fp => filePathToUrl(fp));
                     }
-
                     n[index].result = { ...currentResult, ...update };
                     return n;
                 });
@@ -159,13 +221,16 @@ export function ImageToVideoTab({ model, language }: Props) {
 
     const handleGenerateAll = async () => {
         const pendingIndices = items.map((item, i) => ({ item, i }))
-            .filter(({ item }) => item.status !== 'loading')
+            .filter(({ item }) => item.status !== 'loading' && item.status !== 'success') // Only idle or error? Or just everything not processing?
+            // "Generate All" usually implies processing pending items.
+            // Let's filter for 'idle' or 'error'.
+            .filter(({ item }) => item.status === 'idle' || item.status === 'error')
             .map(({ i }) => i);
 
         if (pendingIndices.length === 0) return;
 
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(t.alertNoKey); return; }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -190,19 +255,22 @@ export function ImageToVideoTab({ model, language }: Props) {
         } catch (e) {
             console.log("Batch error or cancelled", e);
         } finally {
+            if (!controller.signal.aborted) {
+                toastSuccess(t.batchComplete || "Batch generation completed!");
+            }
             setIsProcessing(false);
             abortControllerRef.current = null;
         }
     };
 
-    const retrySingle = async (index: number) => {
+    const retrySingle = useCallback(async (index: number) => {
         const apiKey = await getApiKey();
-        if (!apiKey) { alert(t.alertNoKey); return; }
+        if (!apiKey) { toastError(translations[language as Language]?.alertNoKey || translations.vi.alertNoKey); return; }
         const controller = new AbortController();
 
         setItems(prev => {
             const n = [...prev];
-            n[index] = { ...n[index], status: 'loading', result: undefined, error: undefined };
+            n[index] = { ...n[index], status: 'queued', result: undefined, error: undefined };
             return n;
         });
 
@@ -211,7 +279,7 @@ export function ImageToVideoTab({ model, language }: Props) {
         } catch (e) {
             console.log('Retry error:', e);
         }
-    };
+    }, [language, model, aspectRatio, saveDir]);
 
     // --- Download All ---
     const handleDownloadAll = () => {
@@ -254,13 +322,11 @@ export function ImageToVideoTab({ model, language }: Props) {
                 </div>
 
                 {/* Add Images */}
-                <button onClick={() => fileInputRef.current?.click()}
+                <button onClick={handleFilesSelect}
                     className="flex items-center justify-center gap-2 w-full py-2.5 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-600 transition bg-gray-50/50">
                     <Upload className="w-4 h-4" />
                     <span className="text-xs font-medium">{t.addImages}</span>
                 </button>
-                <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
-                    onChange={e => { if (e.target.files) handleFilesSelect(Array.from(e.target.files)); e.target.value = ''; }} />
 
                 {/* Queue List */}
                 <div className="flex-1 flex flex-col border border-gray-200 rounded-lg overflow-hidden bg-white">
@@ -280,44 +346,17 @@ export function ImageToVideoTab({ model, language }: Props) {
                         ) : (
                             <div className="divide-y divide-gray-100">
                                 {items.map((item, i) => (
-                                    <div key={item.id} onClick={() => setSelectedIndex(i)}
-                                        className={`group flex items-start gap-3 p-3 cursor-pointer transition ${selectedIndex === i ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-gray-50 border-l-2 border-transparent'}`}>
-
-                                        {/* Thumbnail */}
-                                        <div className="w-16 h-16 shrink-0 rounded overflow-hidden border border-gray-200 bg-gray-100 relative">
-                                            <img src={item.preview} className="w-full h-full object-cover" />
-                                            {item.status === 'loading' && (
-                                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                                                    <Loader2 className="w-5 h-5 text-white animate-spin" />
-                                                </div>
-                                            )}
-                                            {item.status === 'success' && (
-                                                <div className="absolute bottom-0 right-0 bg-green-500 text-white text-[8px] px-1 py-0.5 rounded-tl">DONE</div>
-                                            )}
-                                            {item.status === 'error' && (
-                                                <div className="absolute bottom-0 right-0 bg-red-500 text-white text-[8px] px-1 py-0.5 rounded-tl">ERR</div>
-                                            )}
-                                        </div>
-
-                                        {/* Content */}
-                                        <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                                            <div className="flex justify-between items-start">
-                                                <span className="text-[10px] text-gray-400 truncate max-w-[100px]">{item.file.name}</span>
-                                                <button onClick={(e) => { e.stopPropagation(); removeItem(i); }} disabled={isProcessing}
-                                                    className="text-gray-300 hover:text-red-500 disabled:opacity-0 opacity-0 group-hover:opacity-100 transition">
-                                                    <X className="w-3 h-3" />
-                                                </button>
-                                            </div>
-                                            <textarea
-                                                value={item.prompt}
-                                                onChange={e => updatePrompt(i, e.target.value)}
-                                                onClick={e => e.stopPropagation()}
-                                                placeholder={t.refImagePlaceholder}
-                                                rows={2}
-                                                className="w-full bg-white border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-blue-400 resize-none transaction"
-                                            />
-                                        </div>
-                                    </div>
+                                    <ImageItemRow
+                                        key={item.id}
+                                        index={i}
+                                        item={item}
+                                        isSelected={selectedIndex === i}
+                                        onSelect={() => setSelectedIndex(i)}
+                                        onRemove={removeItem}
+                                        onUpdatePrompt={updatePrompt}
+                                        t={t}
+                                        disabled={isProcessing}
+                                    />
                                 ))}
                             </div>
                         )}
@@ -334,7 +373,7 @@ export function ImageToVideoTab({ model, language }: Props) {
                     ) : (
                         <button onClick={handleGenerateAll} disabled={items.length === 0}
                             className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium py-2.5 rounded-lg text-sm transition shadow-sm">
-                            <Play className="w-4 h-4" /> {t.generateAll} ({items.filter(i => i.status !== 'loading').length})
+                            <Play className="w-4 h-4" /> {t.generateAll} ({items.filter(i => i.status !== 'loading' && i.status !== 'success').length})
                         </button>
                     )}
                 </div>
@@ -372,9 +411,9 @@ export function ImageToVideoTab({ model, language }: Props) {
                                             <img src={item.preview} className="w-full h-full object-cover" />
                                         </div>
                                         <span className="text-xs font-medium text-gray-600 truncate flex-1">
-                                            {item.file.name}
+                                            {item.filePath.split(/[/\\]/).pop()}
                                         </span>
-                                        {item.status !== 'loading' && (
+                                        {item.status !== 'loading' && item.status !== 'queued' && (
                                             <button onClick={() => retrySingle(i)}
                                                 className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 shrink-0">
                                                 <RotateCcw className="w-3 h-3" /> {t.retry}
@@ -383,6 +422,12 @@ export function ImageToVideoTab({ model, language }: Props) {
                                     </div>
                                     {item.status === 'idle' && (
                                         <div className="text-xs text-gray-300 italic">{t.noResults}</div>
+                                    )}
+                                    {item.status === 'queued' && (
+                                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                                            <div className="w-3 h-3 rounded-full border-2 border-gray-300 border-t-transparent" />
+                                            Trong hàng đợi...
+                                        </div>
                                     )}
                                     {item.status === 'loading' && (
                                         <div className="flex items-center gap-2 text-xs text-blue-500">
@@ -407,3 +452,62 @@ export function ImageToVideoTab({ model, language }: Props) {
         </div>
     );
 }
+
+const ImageItemRow = memo(({ index, item, isSelected, onSelect, onRemove, onUpdatePrompt, t, disabled }: {
+    index: number,
+    item: ImageItem,
+    isSelected: boolean,
+    onSelect: () => void,
+    onRemove: (i: number) => void,
+    onUpdatePrompt: (i: number, val: string) => void,
+    t: any,
+    disabled: boolean
+}) => {
+    return (
+        <div onClick={onSelect}
+            className={`group flex items-start gap-3 p-3 cursor-pointer transition ${isSelected ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-gray-50 border-l-2 border-transparent'}`}>
+
+            {/* Thumbnail */}
+            <div className="w-16 h-16 shrink-0 rounded overflow-hidden border border-gray-200 bg-gray-100 relative">
+                <img src={item.preview} className="w-full h-full object-cover" />
+                {item.status === 'loading' && (
+                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <Loader2 className="w-5 h-5 text-white animate-spin" />
+                    </div>
+                )}
+                {item.status === 'queued' && (
+                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <div className="text-[10px] text-white">Queue</div>
+                    </div>
+                )}
+                {item.status === 'success' && (
+                    <div className="absolute bottom-0 right-0 bg-green-500 text-white text-[8px] px-1 py-0.5 rounded-tl">DONE</div>
+                )}
+                {item.status === 'error' && (
+                    <div className="absolute bottom-0 right-0 bg-red-500 text-white text-[8px] px-1 py-0.5 rounded-tl">ERR</div>
+                )}
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div className="flex justify-between items-start">
+                    <span className="text-[10px] text-gray-400 truncate max-w-[100px]" title={item.filePath}>
+                        {item.filePath.split(/[/\\]/).pop()}
+                    </span>
+                    <button onClick={(e) => { e.stopPropagation(); onRemove(index); }} disabled={disabled}
+                        className="text-gray-300 hover:text-red-500 disabled:opacity-0 opacity-0 group-hover:opacity-100 transition">
+                        <X className="w-3 h-3" />
+                    </button>
+                </div>
+                <textarea
+                    value={item.prompt}
+                    onChange={e => onUpdatePrompt(index, e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    placeholder={t.refImagePlaceholder}
+                    rows={2}
+                    className="w-full bg-white border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-blue-400 resize-none transaction"
+                />
+            </div>
+        </div>
+    );
+});
