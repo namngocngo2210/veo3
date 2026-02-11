@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { getApiKey, getSavePath, saveSavePath, saveVideoFileToDir, filePathToUrl, getTabHistory, saveTabHistory, SavedPrompt } from '../lib/store';
+import {
+    getApiKey, saveTabHistory, getTabHistory, filePathToUrl,
+    SavedPrompt, getSavePath, saveSavePath, saveVideoFileToDir, openPath
+} from '../lib/store';
 import { fileToBase64 } from '../lib/gemini';
 import { Upload, Play, Loader2, X, Image as ImageIcon, Download, FolderOpen, Trash2, Square, RectangleHorizontal, RectangleVertical, Plus, RefreshCw } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -7,6 +10,7 @@ import { GoogleGenAI } from '@google/genai';
 import pLimit from 'p-limit';
 import { translations, Language } from '../lib/i18n';
 import { useToast } from './Toast';
+import { useLogger } from './LogContext';
 
 const limit = pLimit(2);
 
@@ -46,20 +50,32 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
     const refImageInputRef = useRef<HTMLInputElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    const { addLog } = useLogger();
+
     const t = translations[language as Language] || translations.vi;
     const { error: toastError, success: toastSuccess } = useToast();
 
     // Expose addPrompts
     useImperativeHandle(ref, () => ({
         addPrompts: (newPrompts: string[]) => {
-            const newItems: PromptItem[] = newPrompts.map(t => ({
-                id: crypto.randomUUID(),
-                text: t,
-                status: 'idle',
-                resultImages: [],
-            }));
-            setItems(prev => [...prev, ...newItems]);
-            setSelectedIndex(items.length);
+            addLog('info', 'BananaTab', `Adding ${newPrompts.length} prompts via ref`, { newPrompts });
+            setItems(prev => {
+                const newItems: PromptItem[] = newPrompts.map(t => ({
+                    id: crypto.randomUUID(),
+                    text: t,
+                    status: 'idle',
+                    resultImages: [],
+                }));
+                addLog('debug', 'BananaTab', `Queue size: ${prev.length} -> ${prev.length + newItems.length} `);
+                return [...prev, ...newItems];
+            });
+            setTimeout(() => {
+                setSelectedIndex(prev => {
+                    const next = prev === null ? 0 : prev;
+                    addLog('debug', 'BananaTab', `Setting selected index to ${next} `);
+                    return next;
+                });
+            }, 50);
         }
     }));
 
@@ -198,6 +214,7 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
             // Build content: text + optional reference images
             const parts: any[] = [{ text: item.text }];
             if (refImages.length > 0) {
+                addLog('debug', 'BananaTab', `Using ${refImages.length} reference images`);
                 for (const ref of refImages) {
                     const base64 = await fileToBase64(ref.file);
                     parts.push({
@@ -209,6 +226,7 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
                 }
             }
 
+            addLog('info', 'BananaTab', `Calling Gemini API for prompt #${index + 1}`, { prompt: item.text });
             if (signal.aborted) throw new Error("Cancelled");
 
             const response = await ai.models.generateContent({
@@ -228,14 +246,22 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
                     const mimeType = part.inlineData.mimeType || 'image/png';
 
                     if (saveDir) {
-                        const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type: mimeType });
-                        const ext = mimeType.includes('png') ? 'png' : 'jpg';
-                        const filename = `imagen_${Date.now()}_${images.length}.${ext}`;
-                        const filePath = await saveVideoFileToDir(blob, filename, saveDir);
-                        filePaths.push(filePath);
-                        images.push(filePathToUrl(filePath));
+                        try {
+                            const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type: mimeType });
+                            const ext = mimeType.includes('png') ? 'png' : 'jpg';
+                            const filename = `imagen_${Date.now()}_${images.length}.${ext} `;
+                            const filePath = await saveVideoFileToDir(blob, filename, saveDir);
+                            filePaths.push(filePath);
+                            const url = filePathToUrl(filePath);
+                            images.push(url);
+                            addLog('debug', 'BananaTab', `Saved image to ${filePath} -> ${url} `);
+                        } catch (saveErr: any) {
+                            addLog('error', 'BananaTab', `Failed to save image to ${saveDir} `, { error: saveErr.message });
+                            // Fallback to data URL
+                            images.push(`data:${mimeType}; base64, ${b64} `);
+                        }
                     } else {
-                        images.push(`data:${mimeType};base64,${b64}`);
+                        images.push(`data:${mimeType}; base64, ${b64} `);
                     }
                 }
             }
@@ -254,8 +280,13 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
                 };
                 return n;
             });
+            addLog('success' as any, 'BananaTab', `Successfully generated ${images.length} images for prompt #${index + 1}`);
         } catch (e: any) {
-            if (e.name === 'AbortError' || e.message === 'Cancelled') return;
+            if (e.name === 'AbortError' || e.message === 'Cancelled') {
+                addLog('warn', 'BananaTab', `Generation cancelled for prompt #${index + 1}`);
+                return;
+            }
+            addLog('error', 'BananaTab', `Generation failed for prompt #${index + 1}`, { error: e.message });
             setItems(prev => {
                 const n = [...prev];
                 n[index] = { ...n[index], status: 'error', error: e.message };
@@ -275,10 +306,17 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
         const pendingIndices = items.map((item, i) => ({ item, i }))
             .filter(({ item }) => item.status !== 'loading')
             .map(({ i }) => i);
-        if (pendingIndices.length === 0) return;
+
+        addLog('info', 'BananaTab', `Batch generation started for ${pendingIndices.length} items`, { totalItems: items.length });
+
+        if (pendingIndices.length === 0) {
+            addLog('warn', 'BananaTab', 'No pending items to generate');
+            return;
+        }
 
         const apiKey = await getApiKey();
         if (!apiKey) { toastError(t.alertNoKey); return; }
+        if (!saveDir) { toastError(t.alertNoSaveDir); return; }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -301,12 +339,29 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
         finally { setIsProcessing(false); abortControllerRef.current = null; }
     };
 
+    const handleOpenFolder = () => {
+        addLog('info', 'BananaTab', 'Open Folder clicked', { saveDir });
+        if (saveDir) {
+            openPath(saveDir);
+        } else {
+            addLog('warn', 'BananaTab', 'Cannot open folder: saveDir is not set');
+            toastError(t.alertNoSaveDir);
+        }
+    };
+
     const handleDownloadAll = () => {
+        addLog('info', 'BananaTab', 'Download All clicked', { saveDir, totalImages });
+        if (saveDir) {
+            openPath(saveDir);
+            return;
+        }
+        addLog('warn', 'BananaTab', 'No saveDir set, falling back to browser download');
+        // Fallback for when no save dir... (though validation prevents this now)
         items.forEach(item => {
             item.resultImages.forEach((src, i) => {
                 const a = document.createElement('a');
                 a.href = src;
-                a.download = `imagen_${Date.now()}_${i + 1}.png`;
+                a.download = `imagen_${Date.now()}__${i + 1}.png`;
                 a.click();
             });
         });
@@ -329,7 +384,7 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
                     <div className="flex bg-gray-100 rounded-lg p-0.5 text-xs">
                         {(['1:1', '16:9', '9:16'] as const).map(ar => (
                             <button key={ar} onClick={() => setAspectRatio(ar)}
-                                className={`flex items-center gap-1 px-2 py-1.5 rounded-md transition font-medium ${aspectRatio === ar ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>
+                                className={`flex items-center gap-1 px-2 py-1.5 rounded-md transition font-medium ${aspectRatio === ar ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'} `}>
                                 {ar === '1:1' && <ImageIcon className="w-3 h-3" />}
                                 {ar === '16:9' && <RectangleHorizontal className="w-3 h-3" />}
                                 {ar === '9:16' && <RectangleVertical className="w-3 h-3" />}
@@ -381,8 +436,8 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
                             <div className="divide-y divide-gray-50">
                                 {items.map((item, i) => (
                                     <div key={item.id} onClick={() => setSelectedIndex(i)}
-                                        className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition ${selectedIndex === i ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-gray-50 border-l-2 border-transparent'}`}>
-                                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.status === 'idle' ? 'bg-gray-300' : item.status === 'loading' ? 'bg-blue-400 animate-pulse' : item.status === 'success' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                        className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer transition ${selectedIndex === i ? 'bg-blue-50 border-l-2 border-blue-500' : 'hover:bg-gray-50 border-l-2 border-transparent'} `}>
+                                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${item.status === 'idle' ? 'bg-gray-300' : item.status === 'loading' ? 'bg-blue-400 animate-pulse' : item.status === 'success' ? 'bg-green-500' : 'bg-red-500'} `} />
                                         <span className="text-xs text-gray-700 truncate flex-1">{item.text}</span>
                                         {item.resultImages.length > 0 && (
                                             <span className="text-[10px] text-gray-400 shrink-0">{item.resultImages.length} ảnh</span>
@@ -463,11 +518,18 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
                         {t.saved} ({totalImages} ảnh)
                     </span>
                     {totalImages > 0 && (
-                        <button onClick={handleDownloadAll}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium transition">
-                            <Download className="w-3.5 h-3.5" />
-                            {t.downloadAll} ({totalImages})
-                        </button>
+                        <div className="flex gap-2">
+                            <button onClick={handleOpenFolder}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-medium transition">
+                                <FolderOpen className="w-3.5 h-3.5" />
+                                {t.openFolder}
+                            </button>
+                            <button onClick={handleDownloadAll}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium transition">
+                                <Download className="w-3.5 h-3.5" />
+                                {t.downloadAll} ({totalImages})
+                            </button>
+                        </div>
                     )}
                 </div>
 

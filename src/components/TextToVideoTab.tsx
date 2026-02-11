@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, memo } from 'react';
 import { VideoResult, generateVideo, generateBatch } from '../lib/gemini';
-import { getApiKey, saveTabHistory, getTabHistory, filePathToUrl, SavedPrompt, getSavePath, saveSavePath } from '../lib/store';
+import { getApiKey, saveTabHistory, getTabHistory, filePathToUrl, SavedPrompt, getSavePath, saveSavePath, openPath } from '../lib/store';
 import { VideoResultList } from './VideoResultList';
 import { Plus, X, Play, Loader2, Trash2, RotateCcw, Upload, FolderOpen, Download, RectangleHorizontal, RectangleVertical, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -206,6 +206,7 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
         if (prompts.length === 0) return;
         const apiKey = await getApiKey();
         if (!apiKey) { toastError(t.alertNoKey); return; }
+        if (!saveDir) { toastError(t.alertNoSaveDir); return; }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -260,8 +261,17 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
         }
     };
 
-    // --- Download All ---
+    const handleOpenFolder = () => {
+        if (saveDir) {
+            openPath(saveDir);
+        }
+    };
+
     const handleDownloadAll = () => {
+        if (saveDir) {
+            openPath(saveDir);
+            return;
+        }
         const allVideos = prompts.flatMap(p =>
             p.results.filter(r => r.status === 'success' && r.videoBlobUrls).flatMap(r => r.videoBlobUrls || [])
         );
@@ -380,11 +390,18 @@ export const TextToVideoTab = forwardRef<TextToVideoTabHandle, Props>(({ model, 
                         {t.saved} ({totalVideos} video)
                     </span>
                     {totalVideos > 0 && (
-                        <button onClick={handleDownloadAll}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium transition">
-                            <Download className="w-3.5 h-3.5" />
-                            {t.downloadAll} ({totalVideos})
-                        </button>
+                        <div className="flex gap-2">
+                            <button onClick={handleOpenFolder}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-medium transition">
+                                <FolderOpen className="w-3.5 h-3.5" />
+                                {t.openFolder}
+                            </button>
+                            <button onClick={handleDownloadAll}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium transition">
+                                <Download className="w-3.5 h-3.5" />
+                                {t.downloadAll} ({totalVideos})
+                            </button>
+                        </div>
                     )}
                 </div>
                 <div className="flex-1 overflow-y-auto">

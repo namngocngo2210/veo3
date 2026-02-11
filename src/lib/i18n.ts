@@ -9,6 +9,7 @@ export const translations = {
         tabBanana: 'Nano Banana',
         tabVisualPrompts: 'Visual Prompts',
         tabConfig: 'Cấu hình',
+        tabLogs: 'Logs',
 
         // Common
         save: 'Lưu',
@@ -16,6 +17,7 @@ export const translations = {
         delete: 'Xóa',
         download: 'Tải xuống',
         downloadAll: 'Download All',
+        openFolder: 'Mở thư mục',
         generateAll: 'Generate All',
         stop: 'Stop Generating',
         retry: 'Thử lại',
@@ -75,9 +77,17 @@ export const translations = {
         sendToBananaTab: 'Gửi qua Nano Banana',
         promptsGenerated: 'Đã tạo {count} prompts',
         visualPromptPlaceholder: 'Dán kịch bản vào đây hoặc upload file .txt...',
+        visualStyleLabel: 'Visual Style',
+        editStyle: 'Chỉnh sửa Style',
+        newStyle: 'Tạo Style mới',
+        styleNameLabel: 'Tên Style',
+        styleConfigLabel: 'Cấu hình JSON',
+        saveStyle: 'Lưu Style',
+        deleteStyle: 'Xóa Style',
 
         // Alerts
         alertNoKey: 'Lưu API Key trong Config trước!',
+        alertNoSaveDir: 'Chọn thư mục lưu trong Config trước!',
         batchComplete: 'Đã hoàn thành tạo hàng loạt!'
     },
     en: {
@@ -88,6 +98,7 @@ export const translations = {
         tabBanana: 'Nano Banana',
         tabVisualPrompts: 'Visual Prompts',
         tabConfig: 'Config',
+        tabLogs: 'Logs',
 
         // Common
         save: 'Save',
@@ -95,6 +106,7 @@ export const translations = {
         delete: 'Delete',
         download: 'Download',
         downloadAll: 'Download All',
+        openFolder: 'Open Folder',
         generateAll: 'Generate All',
         stop: 'Stop Generating',
         retry: 'Retry',
@@ -154,9 +166,17 @@ export const translations = {
         sendToBananaTab: 'Send to Nano Banana',
         promptsGenerated: 'Generated {count} prompts',
         visualPromptPlaceholder: 'Paste script here or upload .txt file...',
+        visualStyleLabel: 'Visual Style',
+        editStyle: 'Edit Style',
+        newStyle: 'New Style',
+        styleNameLabel: 'Style Name',
+        styleConfigLabel: 'JSON Config',
+        saveStyle: 'Save Style',
+        deleteStyle: 'Delete Style',
 
         // Alerts
         alertNoKey: 'Please save API Key in Config first!',
+        alertNoSaveDir: 'Please choose an output folder in Config first!',
         batchComplete: 'Batch generation completed!'
     }
 };

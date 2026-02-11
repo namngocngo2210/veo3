@@ -4,11 +4,13 @@ import { TextToVideoTab, TextToVideoTabHandle } from "./components/TextToVideoTa
 import { ImageToVideoTab } from "./components/ImageToVideoTab";
 import { BananaTab } from "./components/BananaTab";
 import { VisualPromptsTab } from "./components/VisualPromptsTab";
-import { Settings, Type, ImageIcon, Image as BananaIcon, FileText } from "lucide-react";
+import { LogsTab } from "./components/LogsTab";
+import { Settings, Type, ImageIcon, Image as BananaIcon, FileText, Terminal } from "lucide-react";
+import { useLogger } from "./components/LogContext";
 import { getLanguage } from "./lib/store";
 import { translations, Language } from "./lib/i18n";
 
-type Tab = 'text' | 'image' | 'banana' | 'visual' | 'config';
+type Tab = 'text' | 'image' | 'banana' | 'visual' | 'config' | 'logs';
 
 const tabs: { id: Tab; icon: React.ReactNode }[] = [
   { id: 'text', icon: <Type className="w-3.5 h-3.5" /> },
@@ -16,6 +18,7 @@ const tabs: { id: Tab; icon: React.ReactNode }[] = [
   { id: 'banana', icon: <BananaIcon className="w-3.5 h-3.5" /> },
   { id: 'visual', icon: <FileText className="w-3.5 h-3.5" /> },
   { id: 'config', icon: <Settings className="w-3.5 h-3.5" /> },
+  { id: 'logs', icon: <Terminal className="w-3.5 h-3.5" /> },
 ];
 
 function App() {
@@ -23,7 +26,8 @@ function App() {
   const [model, setModel] = useState('veo-3.1-generate-preview');
   const [language, setLanguage] = useState('vi');
   const textTabRef = useRef<TextToVideoTabHandle>(null);
-  const bananaTabRef = useRef<any>(null); // Todo: Type this properly if needed, or use BananaTabHandle
+  const bananaTabRef = useRef<any>(null);
+  const { addLog } = useLogger();
 
   useEffect(() => {
     getLanguage().then(setLanguage);
@@ -38,6 +42,7 @@ function App() {
       case 'banana': return t.tabBanana;
       case 'visual': return t.tabVisualPrompts;
       case 'config': return t.tabConfig;
+      case 'logs': return t.tabLogs;
     }
   };
 
@@ -75,10 +80,21 @@ function App() {
               setTimeout(() => textTabRef.current?.addPrompts(prompts), 100);
             }}
             onAddBananaPrompts={(prompts) => {
+              addLog('info', 'App', `Sending ${prompts.length} prompts to Nano Banana`);
               setActiveTab('banana');
-              setTimeout(() => bananaTabRef.current?.addPrompts(prompts), 100);
+              setTimeout(() => {
+                if (bananaTabRef.current) {
+                  bananaTabRef.current.addPrompts(prompts);
+                  addLog('debug', 'App', 'Prompts added to BananaTab');
+                } else {
+                  addLog('error', 'App', 'BananaTab ref not found');
+                }
+              }, 200);
             }}
           />
+        </div>
+        <div className={activeTab === 'logs' ? 'h-full' : 'hidden'}>
+          <LogsTab />
         </div>
         <div className={activeTab === 'config' ? '' : 'hidden'}>
           <ConfigTab model={model} onModelChange={setModel} language={language} onLanguageChange={setLanguage} />

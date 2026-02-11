@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { VideoResult, generateVideo, imagePathToBase64 } from '../lib/gemini';
-import { getApiKey, filePathToUrl, getSavePath, saveSavePath, saveTabHistory, getTabHistory, SavedPrompt } from '../lib/store';
+import { getApiKey, filePathToUrl, getSavePath, saveSavePath, saveTabHistory, getTabHistory, SavedPrompt, openPath } from '../lib/store';
 import { VideoResultList } from './VideoResultList';
 import { Upload, Play, Loader2, X, Trash2, RotateCcw, FolderOpen, Download, RectangleHorizontal, RectangleVertical, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -231,6 +231,7 @@ export function ImageToVideoTab({ model, language }: Props) {
 
         const apiKey = await getApiKey();
         if (!apiKey) { toastError(t.alertNoKey); return; }
+        if (!saveDir) { toastError(t.alertNoSaveDir); return; }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
@@ -281,8 +282,17 @@ export function ImageToVideoTab({ model, language }: Props) {
         }
     }, [language, model, aspectRatio, saveDir]);
 
-    // --- Download All ---
+    const handleOpenFolder = () => {
+        if (saveDir) {
+            openPath(saveDir);
+        }
+    };
+
     const handleDownloadAll = () => {
+        if (saveDir) {
+            openPath(saveDir);
+            return;
+        }
         const allVideos = items.flatMap(item =>
             item.result?.videoFilePaths?.map(fp => filePathToUrl(fp)) || []
         );
@@ -386,11 +396,18 @@ export function ImageToVideoTab({ model, language }: Props) {
                         {t.saved} ({totalVideos} video)
                     </span>
                     {totalVideos > 0 && (
-                        <button onClick={handleDownloadAll}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium transition">
-                            <Download className="w-3.5 h-3.5" />
-                            {t.downloadAll} ({totalVideos})
-                        </button>
+                        <div className="flex gap-2">
+                            <button onClick={handleOpenFolder}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-medium transition">
+                                <FolderOpen className="w-3.5 h-3.5" />
+                                {t.openFolder}
+                            </button>
+                            <button onClick={handleDownloadAll}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium transition">
+                                <Download className="w-3.5 h-3.5" />
+                                {t.downloadAll} ({totalVideos})
+                            </button>
+                        </div>
                     )}
                 </div>
 

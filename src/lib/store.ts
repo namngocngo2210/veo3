@@ -1,7 +1,7 @@
 import { load } from '@tauri-apps/plugin-store';
 import { mkdir, writeFile, exists } from '@tauri-apps/plugin-fs';
-import { appDataDir } from '@tauri-apps/api/path';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { appDataDir, join } from '@tauri-apps/api/path';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
 let storeInstance: Awaited<ReturnType<typeof load>> | null = null;
 
@@ -37,7 +37,7 @@ export async function getModel(): Promise<string> {
 // --- Video directory ---
 async function getVideoDir(): Promise<string> {
     const appData = await appDataDir();
-    const videoDir = `${appData}videos`;
+    const videoDir = await join(appData, 'videos');
     const dirExists = await exists(videoDir);
     if (!dirExists) {
         await mkdir(videoDir, { recursive: true });
@@ -48,7 +48,7 @@ async function getVideoDir(): Promise<string> {
 /** Save a video blob to disk, return the file path */
 export async function saveVideoFile(blob: Blob, filename: string): Promise<string> {
     const videoDir = await getVideoDir();
-    const filePath = `${videoDir}\\${filename}`;
+    const filePath = await join(videoDir, filename);
     const buffer = await blob.arrayBuffer();
     await writeFile(filePath, new Uint8Array(buffer));
     return filePath;
@@ -60,7 +60,7 @@ export async function saveVideoFileToDir(blob: Blob, filename: string, dir: stri
     if (!dirExists) {
         await mkdir(dir, { recursive: true });
     }
-    const filePath = `${dir}\\${filename}`;
+    const filePath = await join(dir, filename);
     const buffer = await blob.arrayBuffer();
     await writeFile(filePath, new Uint8Array(buffer));
     return filePath;
@@ -69,6 +69,16 @@ export async function saveVideoFileToDir(blob: Blob, filename: string, dir: stri
 /** Convert a local file path to a URL the webview can load */
 export function filePathToUrl(filePath: string): string {
     return convertFileSrc(filePath);
+}
+
+/** Open a file or folder in the default system application */
+export async function openPath(path: string) {
+    console.log('Attempting to open path:', path);
+    try {
+        await invoke('plugin:opener|open', { path });
+    } catch (e) {
+        console.error('Failed to open path:', e);
+    }
 }
 
 // --- Prompt History ---
@@ -125,6 +135,7 @@ export async function getLanguage(): Promise<string> {
 export interface VisualPromptsHistory {
     script: string;
     prompts: string[];
+    selectedStyleId?: string;
 }
 
 export async function saveVisualPromptsHistory(history: VisualPromptsHistory) {
@@ -135,4 +146,21 @@ export async function saveVisualPromptsHistory(history: VisualPromptsHistory) {
 export async function getVisualPromptsHistory(): Promise<VisualPromptsHistory | null> {
     const store = await getStore();
     return (await store.get<VisualPromptsHistory>('history_visual_prompts')) ?? null;
+}
+
+// --- Visual Styles ---
+export interface VisualStyle {
+    id: string;
+    name: string;
+    config: any;
+}
+
+export async function saveVisualStyles(styles: VisualStyle[]) {
+    const store = await getStore();
+    await store.set('visual_styles', styles);
+}
+
+export async function getVisualStyles(): Promise<VisualStyle[]> {
+    const store = await getStore();
+    return (await store.get<VisualStyle[]>('visual_styles')) ?? [];
 }
