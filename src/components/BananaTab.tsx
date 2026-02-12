@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
     getApiKey, saveTabHistory, getTabHistory, filePathToUrl,
-    SavedPrompt, getSavePath, saveSavePath, saveVideoFileToDir, openPath
+    SavedPrompt, getSavePath, saveSavePath, saveVideoFileToDir, openPath, getLicenseData
 } from '../lib/store';
 import { fileToBase64 } from '../lib/gemini';
 import { Upload, Play, Loader2, X, Image as ImageIcon, Download, FolderOpen, Trash2, Square, RectangleHorizontal, RectangleVertical, Plus, RefreshCw } from 'lucide-react';
@@ -298,6 +298,14 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
     const retrySingle = async (index: number) => {
         const apiKey = await getApiKey();
         if (!apiKey) { toastError(t.alertNoKey); return; }
+
+        // Check License
+        const license = await getLicenseData();
+        if (!license || license.status !== 'active') {
+            toastError(t.statusInvalid || 'License Invalid');
+            return;
+        }
+
         const controller = new AbortController();
         await generateSingle(index, apiKey, controller.signal);
     };
@@ -317,6 +325,13 @@ export const BananaTab = forwardRef<BananaTabHandle, Props>(({ model: _veoModel,
         const apiKey = await getApiKey();
         if (!apiKey) { toastError(t.alertNoKey); return; }
         if (!saveDir) { toastError(t.alertNoSaveDir); return; }
+
+        // Check License
+        const license = await getLicenseData();
+        if (!license || license.status !== 'active') {
+            toastError(t.statusInvalid || 'License Invalid');
+            return;
+        }
 
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();

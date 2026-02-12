@@ -23,6 +23,21 @@ export async function getApiKey(): Promise<string | null> {
     return (await store.get<string>('gemini_api_key')) ?? null;
 }
 
+import { LicenseData } from './licensing';
+
+// ... (getStore/getApiKey logic remains)
+
+// --- Active Key / License ---
+export async function saveLicenseData(data: LicenseData) {
+    const store = await getStore();
+    await store.set('license_data', data);
+}
+
+export async function getLicenseData(): Promise<LicenseData | null> {
+    const store = await getStore();
+    return (await store.get<LicenseData>('license_data')) ?? null;
+}
+
 // --- Model ---
 export async function saveModel(model: string) {
     const store = await getStore();

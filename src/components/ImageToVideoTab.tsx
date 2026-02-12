@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { VideoResult, generateVideo, imagePathToBase64 } from '../lib/gemini';
-import { getApiKey, filePathToUrl, getSavePath, saveSavePath, saveTabHistory, getTabHistory, SavedPrompt, openPath } from '../lib/store';
+import { getApiKey, filePathToUrl, getSavePath, saveSavePath, saveTabHistory, getTabHistory, SavedPrompt, openPath, getLicenseData } from '../lib/store';
 import { VideoResultList } from './VideoResultList';
 import { Upload, Play, Loader2, X, Trash2, RotateCcw, FolderOpen, Download, RectangleHorizontal, RectangleVertical, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -233,6 +233,13 @@ export function ImageToVideoTab({ model, language }: Props) {
         if (!apiKey) { toastError(t.alertNoKey); return; }
         if (!saveDir) { toastError(t.alertNoSaveDir); return; }
 
+        // Check License
+        const license = await getLicenseData();
+        if (!license || license.status !== 'active') {
+            toastError(t.statusInvalid || 'License Invalid');
+            return;
+        }
+
         if (abortControllerRef.current) abortControllerRef.current.abort();
         const controller = new AbortController();
         abortControllerRef.current = controller;
@@ -267,6 +274,14 @@ export function ImageToVideoTab({ model, language }: Props) {
     const retrySingle = useCallback(async (index: number) => {
         const apiKey = await getApiKey();
         if (!apiKey) { toastError(translations[language as Language]?.alertNoKey || translations.vi.alertNoKey); return; }
+
+        // Check License
+        const license = await getLicenseData();
+        if (!license || license.status !== 'active') {
+            toastError(t.statusInvalid || 'License Invalid');
+            return;
+        }
+
         const controller = new AbortController();
 
         setItems(prev => {
