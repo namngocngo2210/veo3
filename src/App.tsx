@@ -27,7 +27,6 @@ function App() {
   const [model, setModel] = useState('veo-3.1-generate-preview');
   const [language, setLanguage] = useState('vi');
   const [isLicensed, setIsLicensed] = useState<boolean>(false); // Default locked
-  const [isChecking, setIsChecking] = useState(true);
 
   const textTabRef = useRef<TextToVideoTabHandle>(null);
   const bananaTabRef = useRef<any>(null);
@@ -40,7 +39,6 @@ function App() {
     checkAndRefreshLicense().then(isValid => {
       setIsLicensed(isValid);
       if (!isValid) setActiveTab('config');
-      setIsChecking(false);
     });
 
     // Periodic check (every 1 hour)
