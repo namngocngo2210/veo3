@@ -146,6 +146,17 @@ export async function getLanguage(): Promise<string> {
     return (await store.get<string>('app_language')) ?? 'vi';
 }
 
+// --- Device ID ---
+export async function getDeviceId(): Promise<string> {
+    const store = await getStore();
+    let id = await store.get<string>('device_id');
+    if (!id) {
+        id = crypto.randomUUID();
+        await store.set('device_id', id);
+    }
+    return id;
+}
+
 // --- Visual Prompts History ---
 export interface VisualPromptsHistory {
     script: string;
